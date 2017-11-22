@@ -200,7 +200,7 @@ module.exports = function(app) {
           d["$source"] = "cloud:" + d["$source"] 
         }
       }
-      
+
       var new_values = []
       d.values.forEach(kp => {
         if ( kp.path.indexOf('.') == -1 ) {
@@ -218,31 +218,40 @@ module.exports = function(app) {
 
   function handleDelta (delta) {
     var isFromCloud = false
-    
-    delta.updates.forEach(u => {
-      if ( (typeof u.source !== 'undefined'
-            && typeof u.source.label !== 'undefined'
-            && u.source.label.startsWith("cloud:"))
-           || (typeof u["$source"] !== 'undefined'
-               && u["$source"].startsWith("cloud:")) ) {
-        isFromCloud = true;
-      }
-    });
 
-    if ( isFromCloud ) {
-      //debug("skipping: " + JSON.stringify(delta))
-      return
-    }
+    if ( delta.updates ) {
+      delta.updates.forEach(u => {
+        if ( (typeof u.source !== 'undefined'
+              && typeof u.source.label !== 'undefined'
+              && u.source.label.startsWith("cloud:"))
+             || (typeof u["$source"] !== 'undefined'
+                 && u["$source"].startsWith("cloud:")) ) {
+          isFromCloud = true;
+        }
+      });
       
-    if (delta.context === 'vessels.self') {
-      delta.context = selfContext
-    }
+      if ( isFromCloud ) {
+      //debug("skipping: " + JSON.stringify(delta))
+        return
+      }
+      
+      if (delta.context === 'vessels.self') {
+        delta.context = selfContext
+      }
+      
+      //debug("handleDelta: " + delta.context)
+      
+      //cleanupDelta(delta, false)
+      
+      delta.updates.forEach(u => {
+        if ( typeof u.source !== 'undefined' ) {
+          delete u.source
+        } else if ( typeof u["$source"] !== 'undefined' ) {
+          delete u["$source"]
+        }
+      });
 
-    //debug("handleDelta: " + delta.context)
-
-    //cleanupDelta(delta, false)
-    
-    if (delta.updates ) {
+      
       connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' )
           console.log("error sending to serveri: " + error);
