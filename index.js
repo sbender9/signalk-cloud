@@ -92,9 +92,14 @@ module.exports = function(app) {
           console.log("error sending to serveri: " + error);
       });
       */
+      
+      var context = "vessels.self"
+      if ( typeof options.sendOtherVessels !== 'undefined' ) {
+        context = "vessels.*"
+      }
 
       command = {
-        context: "vessels.self",
+        "context": context,
         subscribe: [{
           path: "navigation.*",
           period: options.serverUpdatePeriod * 1000
@@ -136,7 +141,6 @@ module.exports = function(app) {
   }
 
   plugin.stop = function() {
-    //app.signalk.removeListener('delta', handleDelta)
     debug("stopping...")
     stopSubscription()
     if ( connection )
@@ -167,12 +171,13 @@ module.exports = function(app) {
   }
 
   function handleDelta (delta) {
-    //debug("handleDelta: " + delta)
     if (delta.context === 'vessels.self') {
       delta.context = selfContext
     }
 
-    if (delta.updates && delta.context === selfContext) {
+    //debug("handleDelta: " + delta.context)
+    
+    if (delta.updates ) {
       connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' )
           console.log("error sending to serveri: " + error);
@@ -241,6 +246,12 @@ module.exports = function(app) {
         enum: [ "nav", "nav+environment" ],
         enumNames: [ "Navigation related data only", "Navigation data and Environmental data"],
         default: "nav+environment"
+      },
+      sendOtherVessels: {
+        type: "boolean",
+        title: "Send Data For Other Vessels",
+        description: "If enabled, you will send data from your AIS to cloud also",
+        default: false
       },
       clientUpdatePeriod: {
         type: 'number',
