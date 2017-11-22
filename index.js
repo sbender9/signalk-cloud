@@ -1,7 +1,6 @@
 const debug = require("debug")("signalk:cloud");
 const util = require("util");
 const WebSocket = require('ws')
-const url = require('url')
 const _ = require('lodash')
 
 const staticKeys = [
@@ -28,6 +27,7 @@ module.exports = function(app) {
   var onStop = []
   var options
   var staticTimer
+  var reconnectTimer
   let selfContext = 'vessels.' + app.selfId
 
   plugin.id = "signalk-cloud";
@@ -46,16 +46,7 @@ module.exports = function(app) {
 
   function connect()
   {
-    var wsUrl = {
-      protocol: "ws",
-      slashes: true,
-      hostname: options.host,
-      port: options.port,
-      pathname: '/signalk/v1/stream',
-      query: {'subscribe': "all"}
-    };
-
-    var theUrl = url.format(wsUrl)
+    var theUrl = options.url + '/signalk/v1/stream?subscribe=all'
     debug("trying to connecto to:: " + theUrl)
 
     var wsOptions = {}
@@ -64,8 +55,16 @@ module.exports = function(app) {
          && options.jwtToken.length > 0 ) {
       wsOptions.headers = { 'Authorization': 'JWT ' + options.jwtToken }
     }
-    
-    connection = new WebSocket(theUrl, "ws", wsOptions);
+
+    try
+    {
+      connection = new WebSocket(theUrl, "ws", wsOptions);
+    }
+    catch ( e )
+    {
+      console.log(`${e}: creating websocket for url: ${theUrl}`);
+      return
+    }
     /*
       skConnection.send = function(data) {
       connection.send(typeof data != 'string' ? JSON.stringify(data) : data);
@@ -129,9 +128,10 @@ module.exports = function(app) {
     };
     connection.onclose = function(event) {
       debug('connection close:' + event);
+      reconnectTimer = null
       stopSubscription()
       connection = null
-      setTimeout(connect, 10000)
+      reconnectTimer = setTimeout(connect, 10000)
     };
   }
 
@@ -154,6 +154,10 @@ module.exports = function(app) {
     if ( staticTimer ) {
       clearTimeout(staticTimer)
       staticTimer = null;
+    }
+    if ( reconnectTimer ) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
     }
   }
 
@@ -208,17 +212,12 @@ module.exports = function(app) {
 
   plugin.schema = {
     type: 'object',
-    required: ['host', 'port'],
+    required: ['url'],
     properties: {
-      host: {
+      url: {
         type: 'string',
-        title: 'Host',
-        default: 'localhost'
-      },
-      port: {
-        type: 'number',
-        title: 'Port',
-        default: 3000
+        title: 'WebSocket URL',
+        default: 'ws://cloud.wilhelmsk.com'
       },
       jwtToken: {
         type: "string",
