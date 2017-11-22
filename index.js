@@ -18,7 +18,16 @@ const staticKeys = [
   "design.airHeight",
   "design.rigging"
 ];
-  
+
+const otherVesselsPaths = [
+  "design.*",
+  "name",
+  "mmsi",
+  "flag",
+  "port",
+  "mothershipMmsi",
+  "url"
+];
 
 module.exports = function(app) {
   var plugin = {};
@@ -94,9 +103,13 @@ module.exports = function(app) {
       */
       
       var context = "vessels.self"
-      if ( typeof options.sendOtherVessels !== 'undefined' ) {
+
+      /*
+      if ( typeof options.sendOtherVessels !== 'undefined'
+           && options.sendOtherVessels ) {
         context = "vessels.*"
       }
+      */
 
       command = {
         "context": context,
@@ -110,6 +123,16 @@ module.exports = function(app) {
         command.subscribe.push({ path: "environment.*",
                                  period: options.resolution});
       }
+
+      /*
+      if ( typeof options.sendOtherVessels !== 'undefined'
+           && options.sendOtherVessels ) {
+        otherVesselsPaths.forEach(p => {
+          command.subscribe.push({ path: p,
+                                   period: options.resolution});
+        });
+      }
+      */
       
       debug("subscription: " + JSON.stringify(command))
       
@@ -128,6 +151,7 @@ module.exports = function(app) {
       var delta = JSON.parse(msg.data)
       if(delta.updates && delta.context != selfContext ) {
         //debug("got delta: " + msg.data)
+        cleanupDeltaFromCloud(delta)
         app.signalk.addDelta.call(app.signalk, delta)
       }
     };
@@ -170,7 +194,39 @@ module.exports = function(app) {
     console.log("error: " + err)
   }
 
+  function cleanupDeltaFromCloud(delta) {
+    delta.updates.forEach(d => {
+      /*
+      if ( typeof d.source !== 'undefined' ) {
+        d.source.label = "cloud:" + d.source.label
+      } else {
+        d["$source"] = "cloud:" + d["$source"] 
+      }*/
+      var new_values = []
+      d.values.forEach(kp => {
+        if ( kp.path.indexOf('.') == -1 ) {
+          var nval = {}
+          nval[kp.path] = kp.value
+          new_values.push({ "path": "", value: nval})
+        } else {
+          new_values.push(kp)
+        }
+      });
+      d.values = new_values;
+    });
+    //debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
+  }
+
   function handleDelta (delta) {
+    var isFromCloud = false
+    /*
+    delta.updates.forEach(u => {
+      if ( typeof d.source !== 'undefined' ) {
+      } else {
+      }
+    });
+    */
+      
     if (delta.context === 'vessels.self') {
       delta.context = selfContext
     }
@@ -247,12 +303,14 @@ module.exports = function(app) {
         enumNames: [ "Navigation related data only", "Navigation data and Environmental data"],
         default: "nav+environment"
       },
+      /*
       sendOtherVessels: {
         type: "boolean",
         title: "Send Data For Other Vessels",
         description: "If enabled, you will send data from your AIS to cloud also",
         default: false
       },
+      */
       clientUpdatePeriod: {
         type: 'number',
         description: "This is the rate at which updates received from the server",
