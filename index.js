@@ -217,7 +217,7 @@ module.exports = function(app) {
       url: {
         type: 'string',
         title: 'WebSocket URL',
-        default: 'ws://cloud.wilhelmsk.com'
+        default: 'wss://cloud.wilhelmsk.com'
       },
       jwtToken: {
         type: "string",
