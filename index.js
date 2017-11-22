@@ -147,7 +147,7 @@ module.exports = function(app) {
       var delta = JSON.parse(msg.data)
       if(delta.updates && delta.context != selfContext ) {
         //debug("got delta: " + msg.data)
-        cleanupDeltaFromCloud(delta)
+        cleanupDelta(delta, true)
         app.signalk.addDelta.call(app.signalk, delta)
       }
     };
@@ -190,14 +190,17 @@ module.exports = function(app) {
     console.log("error: " + err)
   }
 
-  function cleanupDeltaFromCloud(delta) {
+  function cleanupDelta(delta, fromCloud) {
     delta.updates.forEach(d => {
-      
-      if ( typeof d.source !== 'undefined' ) {
-        d.source.label = "cloud:" + d.source.label
-      } else {
-        d["$source"] = "cloud:" + d["$source"] 
+
+      if ( fromCloud ) {
+        if ( typeof d.source !== 'undefined' ) {
+          d.source.label = "cloud:" + d.source.label
+        } else {
+          d["$source"] = "cloud:" + d["$source"] 
+        }
       }
+      
       var new_values = []
       d.values.forEach(kp => {
         if ( kp.path.indexOf('.') == -1 ) {
@@ -236,6 +239,8 @@ module.exports = function(app) {
     }
 
     //debug("handleDelta: " + delta.context)
+
+    cleanupDelta(delta, false)
     
     if (delta.updates ) {
       connection.send(JSON.stringify(delta), function(error) {
