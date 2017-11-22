@@ -119,14 +119,14 @@ module.exports = function(app) {
 
       if ( options.dataToSend == 'nav+environment' ) {
         command.subscribe.push({ path: "environment.*",
-                                 period: options.resolution});
+                                 period: options.serverUpdatePeriod * 1000});
       }
 
       if ( typeof options.sendOtherVessels !== 'undefined'
            && options.sendOtherVessels ) {
         otherVesselsPaths.forEach(p => {
           command.subscribe.push({ path: p,
-                                   period: options.resolution});
+                                   period: options.serverUpdatePeriod * 1000});
         });
       }
       
@@ -240,7 +240,7 @@ module.exports = function(app) {
 
     //debug("handleDelta: " + delta.context)
 
-    cleanupDelta(delta, false)
+    //cleanupDelta(delta, false)
     
     if (delta.updates ) {
       connection.send(JSON.stringify(delta), function(error) {
