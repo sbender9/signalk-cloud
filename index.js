@@ -2,6 +2,7 @@ const debug = require("debug")("signalk:cloud");
 const util = require("util");
 const WebSocket = require('ws')
 const _ = require('lodash')
+const geolib = require('geolib')
 
 const staticKeys = [
   "name",
@@ -38,12 +39,12 @@ const otherVesselsPaths = [
 module.exports = function(app) {
   var plugin = {};
   var connection
-  var blackList
   var onStop = []
   var options
   var staticTimer
   var reconnectTimer
   var positionTimer
+  var lastSubscriptionPosition
   let selfContext = 'vessels.' + app.selfId
 
   plugin.id = "signalk-cloud";
@@ -122,6 +123,8 @@ module.exports = function(app) {
         if ( typeof error !== 'undefined' )
           console.log("error sending to serveri: " + error);
       });
+
+      lastSubscriptionPosition = myposition.value
       
       var context = "vessels.self"
 
@@ -329,7 +332,18 @@ module.exports = function(app) {
   }
 
   function checkPosition() {
-    debug("checkPosition")
+    var pos = _.get(app.signalk.self, "navigation.position")
+    var dist = geolib.getDistance(lastSubscriptionPosition, pos.value)
+    debug(`checkPosition: ${dist}`)
+    if ( dist > 2000 ) {
+      stopSubscription()
+      if ( connection )
+      {
+        connection.onclose = null;
+        connection.close();
+      }
+      connect()
+    }
   }
 
   plugin.schema = {
