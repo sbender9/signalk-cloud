@@ -16,11 +16,14 @@ const staticKeys = [
   "design.beam",
   "design.keel",
   "design.airHeight",
-  "design.rigging"
+  "design.rigging",
+  "sensors.gps.fromCenter",
+  "sensors.gps.fromBow"
 ];
 
 const otherVesselsPaths = [
   "design.*",
+  "sensors.*",
   "name",
   "mmsi",
   "flag",

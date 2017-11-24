@@ -1,6 +1,6 @@
 {
   "name": "signalk-cloud",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Plugin that updates and retrieves data from a SignalK cloud server",
   "main": "index.js",
   "scripts": {
