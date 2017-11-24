@@ -26,7 +26,9 @@ const otherVesselsPaths = [
   "flag",
   "port",
   "mothershipMmsi",
-  "url"
+  "url",
+  "serverName",
+  "serverVersion"
 ];
 
 module.exports = function(app) {
@@ -37,6 +39,7 @@ module.exports = function(app) {
   var options
   var staticTimer
   var reconnectTimer
+  var positionTimer
   let selfContext = 'vessels.' + app.selfId
 
   plugin.id = "signalk-cloud";
@@ -49,14 +52,12 @@ module.exports = function(app) {
     options = theOptions;
 
     connect()
-    
-    //app.signalk.on('delta', handleDelta)
   };
 
   function connect()
   {
-    var theUrl = options.url + '/signalk/v1/stream?subscribe=all'
-    debug("trying to connecto to:: " + theUrl)
+    var theUrl = options.url + '/signalk/v1/stream?subscribe=none'
+    debug("trying to connect to: " + theUrl)
 
     var wsOptions = {}
     
@@ -74,33 +75,49 @@ module.exports = function(app) {
       console.log(`${e}: creating websocket for url: ${theUrl}`);
       return
     }
-    /*
-      skConnection.send = function(data) {
-      connection.send(typeof data != 'string' ? JSON.stringify(data) : data);
-      };
-      skConnection.disconnect = function() {
-      connection.close();
-      debug('Disconnected');
-    };
-    */
+
     connection.onopen = function() {
       debug('connected');
 
-      var command;
+      if ( reconnectTimer ) {
+        clearInterval(reconnectTimer)
+        reconnectTimer = null;
+      }
 
-      /*
-      command = {
-        context: "vessels.*",
+      var myposition = _.get(app.signalk.self, "navigation.position")
+
+      if ( typeof myposition === 'undefined'
+           || typeof myposition.value === 'undefined'
+           || typeof myposition.value.latitude === 'undefined'
+           || typeof myposition.value.longitude === 'undefined' )
+      {
+        debug("no position, retying in 10s...")
+        reconnectTimer = setInterval(connect, 10000)
+        return
+      }
+
+      debug(`myposition: ${JSON.stringify(myposition)}`)
+
+      var remoteSubscription = {
+        context: {
+          relativePosition: {
+            radius: options.otherVesselsRadius,
+            latitude: myposition.value.latitude,
+            longitude: myposition.value.longitude
+          }
+        },
         subscribe: [{
           path: "*",
           period: options.clientUpdatePeriod * 1000
         }]
       }
-      connection.send(JSON.stringify(command), function(error) {
+
+      debug("remote subscription: " + JSON.stringify(remoteSubscription))
+      
+      connection.send(JSON.stringify(remoteSubscription), function(error) {
         if ( typeof error !== 'undefined' )
           console.log("error sending to serveri: " + error);
       });
-      */
       
       var context = "vessels.self"
 
@@ -109,7 +126,7 @@ module.exports = function(app) {
         context = "vessels.*"
       }
 
-      command = {
+      var localSubscription = {
         "context": context,
         subscribe: [{
           path: "navigation.*",
@@ -118,27 +135,37 @@ module.exports = function(app) {
       }
 
       if ( options.dataToSend == 'nav+environment' ) {
-        command.subscribe.push({ path: "environment.*",
-                                 period: options.serverUpdatePeriod * 1000});
+        localSubscription.subscribe.push(
+          {
+            path: "environment.*",
+            period: options.serverUpdatePeriod * 1000
+          }
+        );
       }
 
       if ( typeof options.sendOtherVessels !== 'undefined'
            && options.sendOtherVessels ) {
         otherVesselsPaths.forEach(p => {
-          command.subscribe.push({ path: p,
-                                   period: options.serverUpdatePeriod * 1000});
+          localSubscription.subscribe.push(
+            {
+              path: p,
+              period: options.serverUpdatePeriod * 1000
+            }
+          );
         });
       }
       
-      debug("subscription: " + JSON.stringify(command))
+      debug("local subscription: " + JSON.stringify(localSubscription))
       
-      app.subscriptionmanager.subscribe(command,
+      app.subscriptionmanager.subscribe(localSubscription,
                                         onStop,
                                         subscription_error,
                                         handleDelta);
 
       sendStatic()
-      staticTimer = setTimeout(sendStatic, 60000*options.staticUpdatePeriod)
+      staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
+
+      positionTimer = setInterval(checkPosition, 60000)
     };
     connection.onerror = function(error) {
       debug('error:' + error);
@@ -146,17 +173,16 @@ module.exports = function(app) {
     connection.onmessage = function(msg) {
       var delta = JSON.parse(msg.data)
       if(delta.updates && delta.context != selfContext ) {
-        //debug("got delta: " + msg.data)
         cleanupDelta(delta, true)
+        //debug("got delta: " + msg.data)
         app.signalk.addDelta.call(app.signalk, delta)
       }
     };
     connection.onclose = function(event) {
-      debug('connection close:' + event);
-      reconnectTimer = null
+      debug('connection close');
       stopSubscription()
       connection = null
-      reconnectTimer = setTimeout(connect, 10000)
+      reconnectTimer = setInterval(connect, 10000)
     };
   }
 
@@ -176,12 +202,16 @@ module.exports = function(app) {
     onStop = []
 
     if ( staticTimer ) {
-      clearTimeout(staticTimer)
+      clearInterval(staticTimer)
       staticTimer = null;
     }
     if ( reconnectTimer ) {
-      clearTimeout(reconnectTimer)
+      clearInterval(reconnectTimer)
       reconnectTimer = null
+    }
+    if ( positionTimer ) {
+      clearInterval(positionTimer)
+      positionTimer = null;
     }
   }
 
@@ -200,18 +230,6 @@ module.exports = function(app) {
           d["$source"] = "cloud:" + d["$source"] 
         }
       }
-
-      var new_values = []
-      d.values.forEach(kp => {
-        if ( kp.path.indexOf('.') == -1 ) {
-          var nval = {}
-          nval[kp.path] = kp.value
-          new_values.push({ "path": "", value: nval})
-        } else {
-          new_values.push(kp)
-        }
-      });
-      d.values = new_values;
     });
     //debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
   }
@@ -246,7 +264,8 @@ module.exports = function(app) {
       delta.updates.forEach(u => {
         if ( typeof u.source !== 'undefined' ) {
           delete u.source
-        } else if ( typeof u["$source"] !== 'undefined' ) {
+        }
+        if ( typeof u["$source"] !== 'undefined' ) {
           delete u["$source"]
         }
       });
@@ -260,7 +279,13 @@ module.exports = function(app) {
   }
 
   function sendStatic() {
-    var values = [];
+    var values = [{
+      path: "",
+      value: {
+        serverName: 'signalk-server-node',
+        serverVersion: app.config.version
+      }
+    }];
     
     staticKeys.forEach(path => {
       var val = _.get(app.signalk.self, path)
@@ -287,6 +312,10 @@ module.exports = function(app) {
       if ( typeof error !== 'undefined' )
         console.log("error sending to serveri: " + error);
     });
+  }
+
+  function checkPosition() {
+    debug("checkPosition")
   }
 
   plugin.schema = {
@@ -332,6 +361,12 @@ module.exports = function(app) {
         description: "This is the rate at which updates received from the server",
         title: 'Client Update Period (seconds)',
         default: 30
+      },
+      otherVesselsRadius: {
+        type: "number",
+        description: "The radius in meters of other vessels to watch",
+        title: "Other Vessel Radius",
+        default: 5000
       }
     }
   };
