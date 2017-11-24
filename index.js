@@ -28,6 +28,7 @@ const otherVesselsPaths = [
   "mothershipMmsi",
   "url",
   "serverName",
+  "atonType",
   "serverVersion"
 ];
 
@@ -161,6 +162,16 @@ module.exports = function(app) {
                                         onStop,
                                         subscription_error,
                                         handleDelta);
+
+      if ( typeof options.sendOtherVessels !== 'undefined'
+           && options.sendOtherVessels ) {
+        localSubscription.context = "atons.*";
+        app.subscriptionmanager.subscribe(localSubscription,
+                                          onStop,
+                                          subscription_error,
+                                          handleDelta);
+      }
+        
 
       sendStatic()
       staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
