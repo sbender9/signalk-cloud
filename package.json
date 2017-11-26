@@ -1,6 +1,6 @@
 {
   "name": "signalk-cloud",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Plugin that updates and retrieves data from a SignalK cloud server",
   "main": "index.js",
   "scripts": {
@@ -21,6 +21,7 @@
     "debug": "^2.2.0",
     "geolib": "^2.0.24",
     "lodash": "^4.17.4",
+    "request": "^2.83.0",
     "ws": "^3.0.0"
   },
   "repository": {

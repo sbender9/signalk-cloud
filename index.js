@@ -3,6 +3,7 @@ const util = require("util");
 const WebSocket = require('ws')
 const _ = require('lodash')
 const geolib = require('geolib')
+const request = require('request')
 
 const staticKeys = [
   "name",
@@ -61,146 +62,200 @@ module.exports = function(app) {
 
   function connect()
   {
-    var theUrl = options.url + '/signalk/v1/stream?subscribe=none'
-    debug("trying to connect to: " + theUrl)
+    var url
 
-    var wsOptions = {}
-    
-    if ( typeof options.jwtToken !== 'undefined'
-         && options.jwtToken.length > 0 ) {
-      wsOptions.headers = { 'Authorization': 'JWT ' + options.jwtToken }
+    //try to support old config which had the ws url
+    if ( options.url.startsWith("ws:") ) {
+      url = "http:" + options.url.substring(3);
+    } else if ( options.url.startsWith("wss:") ) {
+      url = "https:" + options.url.substring(4);
+    } else {
+      url = options.url
     }
 
-    try
-    {
-      connection = new WebSocket(theUrl, "ws", wsOptions);
-    }
-    catch ( e )
-    {
-      console.log(`${e}: creating websocket for url: ${theUrl}`);
-      return
-    }
-
-    connection.onopen = function() {
-      debug('connected');
-
-      if ( reconnectTimer ) {
-        clearInterval(reconnectTimer)
-        reconnectTimer = null;
-      }
-
-      var myposition = _.get(app.signalk.self, "navigation.position")
-
-      if ( typeof myposition === 'undefined'
-           || typeof myposition.value === 'undefined'
-           || typeof myposition.value.latitude === 'undefined'
-           || typeof myposition.value.longitude === 'undefined' )
+    request(url + '/signalk', function (error, response, body) {
+      if ( error )
       {
-        debug("no position, retying in 10s...")
+        console.log(`Error connecting to cloud server ${error}`)
+        reconnectTimer = setInterval(connect, 10000)
+        return
+      } else if ( response.statusCode != 200 ) {
+        console.log(`Bad status code from cloud server ${response.statusCode}`)
         reconnectTimer = setInterval(connect, 10000)
         return
       }
 
-      debug(`myposition: ${JSON.stringify(myposition)}`)
+      var info = JSON.parse(body)
 
-      var remoteSubscription = {
-        context: {
-          relativePosition: {
-            radius: options.otherVesselsRadius,
-            latitude: myposition.value.latitude,
-            longitude: myposition.value.longitude
-          }
-        },
-        subscribe: [{
-          path: "*",
-          period: options.clientUpdatePeriod * 1000
-        }]
-      }
-
-      debug("remote subscription: " + JSON.stringify(remoteSubscription))
+      debug(`server info ${JSON.stringify(info)}`)
       
-      connection.send(JSON.stringify(remoteSubscription), function(error) {
-        if ( typeof error !== 'undefined' )
-          console.log("error sending to serveri: " + error);
-      });
-
-      lastSubscriptionPosition = myposition.value
+      var endpoints = info.endpoints.v1
       
-      var context = "vessels.self"
+      var wsUrl = (endpoints['signalk-ws'] ? endpoints['signalk-ws'] : endpoints['signalk-wss']) + '?subscribe=none'
+      var httpURL = (endpoints['signalk-https'] ? endpoints['signalk-https'] : endpoints['signalk-http'])
 
-      if ( typeof options.sendOtherVessels !== 'undefined'
-           && options.sendOtherVessels ) {
-        context = "vessels.*"
+      if ( !httpURL.endsWith('/') ) {
+        httpURL = httpURL + '/'
       }
 
-      var localSubscription = {
-        "context": context,
-        subscribe: [{
-          path: "navigation.*",
-          period: options.serverUpdatePeriod * 1000
-        }]
+      
+      debug("trying to connect to: " + wsUrl)
+
+      var wsOptions = {}
+      
+      if ( typeof options.jwtToken !== 'undefined'
+           && options.jwtToken.length > 0 ) {
+        wsOptions.headers = { 'Authorization': 'JWT ' + options.jwtToken }
       }
 
-      if ( options.dataToSend == 'nav+environment' ) {
-        localSubscription.subscribe.push(
-          {
-            path: "environment.*",
+      try
+      {
+        connection = new WebSocket(wsUrl, "ws", wsOptions);
+      }
+      catch ( e )
+      {
+        console.log(`${e}: creating websocket for url: ${theUrl}`);
+        return
+      }
+
+      connection.onopen = function() {
+        debug('connected');
+
+        if ( reconnectTimer ) {
+          clearInterval(reconnectTimer)
+          reconnectTimer = null;
+        }
+
+        var myposition = _.get(app.signalk.self, "navigation.position")
+
+        if ( typeof myposition === 'undefined'
+             || typeof myposition.value === 'undefined'
+             || typeof myposition.value.latitude === 'undefined'
+             || typeof myposition.value.longitude === 'undefined' )
+        {
+          debug("no position, retying in 10s...")
+          reconnectTimer = setInterval(connect, 10000)
+          return
+        }
+
+        debug(`myposition: ${JSON.stringify(myposition)}`)
+
+        var remoteSubscription = {
+          context: {
+            relativePosition: {
+              radius: options.otherVesselsRadius,
+              latitude: myposition.value.latitude,
+              longitude: myposition.value.longitude
+            }
+          },
+          subscribe: [{
+            path: "*",
+            period: options.clientUpdatePeriod * 1000
+          }]
+        }
+
+        debug("remote subscription: " + JSON.stringify(remoteSubscription))
+        
+        connection.send(JSON.stringify(remoteSubscription), function(error) {
+          if ( typeof error !== 'undefined' )
+            console.log("error sending to serveri: " + error);
+        });
+
+        lastSubscriptionPosition = myposition.value
+        
+        var context = "vessels.self"
+
+        if ( typeof options.sendOtherVessels !== 'undefined'
+             && options.sendOtherVessels ) {
+          context = "vessels.*"
+        }
+
+        var localSubscription = {
+          "context": context,
+          subscribe: [{
+            path: "navigation.*",
             period: options.serverUpdatePeriod * 1000
-          }
-        );
-      }
+          }]
+        }
 
-      if ( typeof options.sendOtherVessels !== 'undefined'
-           && options.sendOtherVessels ) {
-        otherVesselsPaths.forEach(p => {
+        if ( options.dataToSend == 'nav+environment' ) {
           localSubscription.subscribe.push(
             {
-              path: p,
+              path: "environment.*",
               period: options.serverUpdatePeriod * 1000
             }
           );
-        });
-      }
-      
-      debug("local subscription: " + JSON.stringify(localSubscription))
-      
-      app.subscriptionmanager.subscribe(localSubscription,
-                                        onStop,
-                                        subscription_error,
-                                        handleDelta);
+        }
 
-      if ( typeof options.sendOtherVessels !== 'undefined'
-           && options.sendOtherVessels ) {
-        localSubscription.context = "atons.*";
+        if ( typeof options.sendOtherVessels !== 'undefined'
+             && options.sendOtherVessels ) {
+          otherVesselsPaths.forEach(p => {
+            localSubscription.subscribe.push(
+              {
+                path: p,
+                period: options.serverUpdatePeriod * 1000
+              }
+            );
+          });
+        }
+        
+        debug("local subscription: " + JSON.stringify(localSubscription))
+        
         app.subscriptionmanager.subscribe(localSubscription,
                                           onStop,
                                           subscription_error,
                                           handleDelta);
-      }
+
+        if ( typeof options.sendOtherVessels !== 'undefined'
+             && options.sendOtherVessels ) {
+          localSubscription.context = "atons.*";
+          app.subscriptionmanager.subscribe(localSubscription,
+                                            onStop,
+                                            subscription_error,
+                                            handleDelta);
+        }
         
 
-      sendStatic()
-      staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
+        sendStatic()
+        staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
-      positionTimer = setInterval(checkPosition, 60000)
-    };
-    connection.onerror = function(error) {
-      debug('error:' + error);
-    }
-    connection.onmessage = function(msg) {
-      var delta = JSON.parse(msg.data)
-      if(delta.updates && delta.context != selfContext ) {
-        cleanupDelta(delta, true)
-        //debug("got delta: " + msg.data)
-        app.signalk.addDelta.call(app.signalk, delta)
+        positionTimer = setInterval(checkPosition, 60000)
+
+        var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.value.latitude}&longitude=${myposition.value.longitude}`;
+        debug(`Getting existing vessels using ${vesselsUrl}`)
+        request(vesselsUrl, (error, response, body) => {
+          if ( !error && response.statusCode ) {
+            var vessels = JSON.parse(body)
+            _.forIn(vessels, (value, key) => {
+              if ( key != selfContext ) {
+                debug(`loading vessel: ${key}`)
+                app.signalk.root.vessels[key] = value
+              }
+            });
+          } else {
+            console.log(`Error getting existing vessels from cloud server: ${error}`)
+          }
+        });
       }
-    };
-    connection.onclose = function(event) {
-      debug('connection close');
-      stopSubscription()
-      connection = null
-      reconnectTimer = setInterval(connect, 10000)
-    };
+      
+      connection.onerror = function(error) {
+        debug('error:' + error);
+      }
+      connection.onmessage = function(msg) {
+        var delta = JSON.parse(msg.data)
+        if(delta.updates && delta.context != selfContext ) {
+          cleanupDelta(delta, true)
+          //debug("got delta: " + msg.data)
+          app.signalk.addDelta.call(app.signalk, delta)
+        }
+      };
+      connection.onclose = function(event) {
+        debug('connection close');
+        stopSubscription()
+        connection = null
+        reconnectTimer = setInterval(connect, 10000)
+      };
+    });
   }
 
   plugin.stop = function() {
@@ -352,8 +407,8 @@ module.exports = function(app) {
     properties: {
       url: {
         type: 'string',
-        title: 'WebSocket URL',
-        default: 'wss://cloud.wilhelmsk.com'
+        title: 'Server URL',
+        default: 'http://cloud.wilhelmsk.com'
       },
       jwtToken: {
         type: "string",
