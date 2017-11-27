@@ -73,15 +73,21 @@ module.exports = function(app) {
       url = options.url
     }
 
-    request(url + '/signalk', function (error, response, body) {
+    var infoUrl = url + '/signalk'
+    debug(`trying ${infoUrl}`)
+    request(infoUrl, function (error, response, body) {
       if ( error )
       {
         console.log(`Error connecting to cloud server ${error}`)
-        reconnectTimer = setInterval(connect, 10000)
+        if ( ! reconnectTimer ) {
+          reconnectTimer = setInterval(connect, 10000)
+        }
         return
       } else if ( response.statusCode != 200 ) {
         console.log(`Bad status code from cloud server ${response.statusCode}`)
-        reconnectTimer = setInterval(connect, 10000)
+        if ( !reconnectTimer ) {
+          reconnectTimer = setInterval(connect, 10000)
+        }
         return
       }
 
@@ -134,7 +140,9 @@ module.exports = function(app) {
              || typeof myposition.value.longitude === 'undefined' )
         {
           debug("no position, retying in 10s...")
-          reconnectTimer = setInterval(connect, 10000)
+          if ( !reconnectTimer ) {
+            reconnectTimer = setInterval(connect, 10000)
+          }
           return
         }
 
@@ -143,9 +151,7 @@ module.exports = function(app) {
         var remoteSubscription = {
           context: {
             relativePosition: {
-              radius: options.otherVesselsRadius,
-              latitude: myposition.value.latitude,
-              longitude: myposition.value.longitude
+              radius: options.otherVesselsRadius
             }
           },
           subscribe: [{
@@ -219,8 +225,6 @@ module.exports = function(app) {
         sendStatic()
         staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
-        positionTimer = setInterval(checkPosition, 60000)
-
         var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.value.latitude}&longitude=${myposition.value.longitude}`;
         debug(`Getting existing vessels using ${vesselsUrl}`)
         request(vesselsUrl, (error, response, body) => {
@@ -245,7 +249,7 @@ module.exports = function(app) {
         var delta = JSON.parse(msg.data)
         if(delta.updates && delta.context != selfContext ) {
           cleanupDelta(delta, true)
-          //debug("got delta: " + msg.data)
+          debug("got delta: " + msg.data)
           app.signalk.addDelta.call(app.signalk, delta)
         }
       };
@@ -384,21 +388,6 @@ module.exports = function(app) {
       if ( typeof error !== 'undefined' )
         console.log("error sending to serveri: " + error);
     });
-  }
-
-  function checkPosition() {
-    var pos = _.get(app.signalk.self, "navigation.position")
-    var dist = geolib.getDistance(lastSubscriptionPosition, pos.value)
-    debug(`checkPosition: ${dist}`)
-    if ( dist > 2000 ) {
-      stopSubscription()
-      if ( connection )
-      {
-        connection.onclose = null;
-        connection.close();
-      }
-      connect()
-    }
   }
 
   plugin.schema = {
