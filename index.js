@@ -57,6 +57,13 @@ module.exports = function(app) {
 
     options = theOptions;
 
+    if ( options.jwtToken === 'undefined'
+         || options.jwtToken.length == 0 )
+    {
+      console.log('signalk-cloud: ERROR no jwt token specified')
+      return;
+    }
+    
     connect()
   };
 
@@ -103,7 +110,6 @@ module.exports = function(app) {
       if ( !httpURL.endsWith('/') ) {
         httpURL = httpURL + '/'
       }
-
       
       debug("trying to connect to: " + wsUrl)
 
@@ -134,12 +140,15 @@ module.exports = function(app) {
 
         var myposition = _.get(app.signalk.self, "navigation.position")
 
+        if ( !_.isUndefined(myposition) && !_.isUndefined(myposition.value) ) {
+          myposition = myposition.value
+        }
+
         if ( typeof myposition === 'undefined'
-             || typeof myposition.value === 'undefined'
-             || typeof myposition.value.latitude === 'undefined'
-             || typeof myposition.value.longitude === 'undefined' )
+             || typeof myposition.latitude === 'undefined'
+             || typeof myposition.longitude === 'undefined' )
         {
-          debug("no position, retying in 10s...")
+          console.log("signalk-cloud: no position, retying in 10s...")
           if ( !reconnectTimer ) {
             reconnectTimer = setInterval(connect, 10000)
           }
@@ -149,8 +158,7 @@ module.exports = function(app) {
         debug(`myposition: ${JSON.stringify(myposition)}`)
 
         var remoteSubscription = {
-          context: {
-            relativePosition: {
+          context: { relativePosition: {
               radius: options.otherVesselsRadius
             }
           },
@@ -161,13 +169,13 @@ module.exports = function(app) {
         }
 
         debug("remote subscription: " + JSON.stringify(remoteSubscription))
-        
+
         connection.send(JSON.stringify(remoteSubscription), function(error) {
           if ( typeof error !== 'undefined' )
             console.log("error sending to serveri: " + error);
         });
 
-        lastSubscriptionPosition = myposition.value
+        lastSubscriptionPosition = myposition
         
         var context = "vessels.self"
 
@@ -206,7 +214,7 @@ module.exports = function(app) {
         }
         
         debug("local subscription: " + JSON.stringify(localSubscription))
-        
+
         app.subscriptionmanager.subscribe(localSubscription,
                                           onStop,
                                           subscription_error,
@@ -225,13 +233,13 @@ module.exports = function(app) {
         sendStatic()
         staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
-        var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.value.latitude}&longitude=${myposition.value.longitude}`;
+        var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.latitude}&longitude=${myposition.longitude}`;
         debug(`Getting existing vessels using ${vesselsUrl}`)
         request(vesselsUrl, (error, response, body) => {
           if ( !error && response.statusCode ) {
             var vessels = JSON.parse(body)
             _.forIn(vessels, (value, key) => {
-              if ( key != selfContext ) {
+              if ( ("vessels." + key) != selfContext ) {
                 debug(`loading vessel: ${key}`)
                 app.signalk.root.vessels[key] = value
               }
@@ -243,13 +251,13 @@ module.exports = function(app) {
       }
       
       connection.onerror = function(error) {
-        debug('error:' + error);
+        console.log('signalk-cloud: connection error:' + error);
       }
       connection.onmessage = function(msg) {
         var delta = JSON.parse(msg.data)
         if(delta.updates && delta.context != selfContext ) {
           cleanupDelta(delta, true)
-          debug("got delta: " + msg.data)
+          //debug("got delta: " + msg.data)
           app.signalk.addDelta.call(app.signalk, delta)
         }
       };
@@ -325,15 +333,13 @@ module.exports = function(app) {
       });
       
       if ( isFromCloud ) {
-      //debug("skipping: " + JSON.stringify(delta))
+        //debug("skipping: " + JSON.stringify(delta))
         return
       }
       
       if (delta.context === 'vessels.self') {
         delta.context = selfContext
       }
-      
-      //debug("handleDelta: " + delta.context)
       
       //cleanupDelta(delta, false)
       
@@ -345,6 +351,8 @@ module.exports = function(app) {
           delete u["$source"]
         }
       });
+
+      //debug("sendDelta: " + JSON.stringify(delta))
 
       
       connection.send(JSON.stringify(delta), function(error) {
@@ -397,7 +405,7 @@ module.exports = function(app) {
       url: {
         type: 'string',
         title: 'Server URL',
-        default: 'http://cloud.wilhelmsk.com'
+        default: 'http://cloud.signalk.org'
       },
       jwtToken: {
         type: "string",
