@@ -80,6 +80,25 @@ module.exports = function(app) {
       url = options.url
     }
 
+    var myposition = _.get(app.signalk.self, "navigation.position")
+    
+    if ( !_.isUndefined(myposition) && !_.isUndefined(myposition.value) ) {
+      myposition = myposition.value
+    }
+    
+    if ( typeof myposition === 'undefined'
+         || typeof myposition.latitude === 'undefined'
+         || typeof myposition.longitude === 'undefined' )
+    {
+      console.log("signalk-cloud: no position, retying in 10s...")
+      if ( !reconnectTimer ) {
+        reconnectTimer = setInterval(connect, 10000)
+      }
+      return
+    }
+    
+    debug(`myposition: ${JSON.stringify(myposition)}`)
+
     var infoUrl = url + '/signalk'
     debug(`trying ${infoUrl}`)
     request(infoUrl, function (error, response, body) {
@@ -137,25 +156,6 @@ module.exports = function(app) {
           clearInterval(reconnectTimer)
           reconnectTimer = null;
         }
-
-        var myposition = _.get(app.signalk.self, "navigation.position")
-
-        if ( !_.isUndefined(myposition) && !_.isUndefined(myposition.value) ) {
-          myposition = myposition.value
-        }
-
-        if ( typeof myposition === 'undefined'
-             || typeof myposition.latitude === 'undefined'
-             || typeof myposition.longitude === 'undefined' )
-        {
-          console.log("signalk-cloud: no position, retying in 10s...")
-          if ( !reconnectTimer ) {
-            reconnectTimer = setInterval(connect, 10000)
-          }
-          return
-        }
-
-        debug(`myposition: ${JSON.stringify(myposition)}`)
 
         var remoteSubscription = {
           context: { relativePosition: {
