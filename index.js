@@ -184,21 +184,33 @@ module.exports = function(app) {
           context = "vessels.*"
         }
 
-        var localSubscription = {
-          "context": context,
-          subscribe: [{
-            path: "navigation.*",
-            period: options.serverUpdatePeriod * 1000
-          }]
-        }
+        var localSubscription
 
-        if ( options.dataToSend == 'nav+environment' ) {
-          localSubscription.subscribe.push(
-            {
-              path: "environment.*",
+        if ( options.dataToSend == 'all' ) {
+          localSubscription = {
+            "context": context,
+            subscribe: [{
+              path: "*",
               period: options.serverUpdatePeriod * 1000
-            }
-          );
+            }]
+          }
+        } else {
+          localSubscription = {
+            "context": context,
+            subscribe: [{
+              path: "navigation.*",
+              period: options.serverUpdatePeriod * 1000
+            }]
+          }
+          
+          if ( options.dataToSend == 'nav+environment' ) {
+            localSubscription.subscribe.push(
+              {
+                path: "environment.*",
+                period: options.serverUpdatePeriod * 1000
+              }
+            );
+          }
         }
 
         if ( typeof options.sendOtherVessels !== 'undefined'
@@ -426,8 +438,8 @@ module.exports = function(app) {
       dataToSend: {
         type: "string",
         title: "Data To Send",
-        enum: [ "nav", "nav+environment" ],
-        enumNames: [ "Navigation related data only", "Navigation data and Environmental data"],
+        enum: [ "nav", "nav+environment", "all" ],
+        enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
         default: "nav+environment"
       },
       sendOtherVessels: {
