@@ -57,7 +57,7 @@ module.exports = function(app) {
 
     options = theOptions;
 
-    if ( options.jwtToken === 'undefined'
+    if ( typeof options.jwtToken === 'undefined'
          || options.jwtToken.length == 0 )
     {
       console.log('signalk-cloud: ERROR no jwt token specified')
