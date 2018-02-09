@@ -1,6 +1,7 @@
 const WebSocket = require('ws')
 const _ = require('lodash')
 const request = require('request')
+const debug = require('debug')('signalk-cloud')
 
 const staticKeys = [
   "name",
@@ -42,7 +43,7 @@ module.exports = function(app) {
   var staticTimer
   var reconnectTimer
   var positionTimer
-  var lastSubscriptionPosition
+  var triedPositionOnce = false
   let selfContext = 'vessels.' + app.selfId
 
   plugin.id = "signalk-cloud";
@@ -75,27 +76,29 @@ module.exports = function(app) {
       url = options.url
     }
 
-    var myposition = app.getSelfPath("navigation.position")
+    var myposition = _.get(app.signalk.self, "navigation.position")
     
     if ( !_.isUndefined(myposition) && !_.isUndefined(myposition.value) ) {
       myposition = myposition.value
     }
     
-    if ( typeof myposition === 'undefined'
-         || typeof myposition.latitude === 'undefined'
-         || typeof myposition.longitude === 'undefined' )
+    if ( (typeof myposition === 'undefined'
+          || typeof myposition.latitude === 'undefined'
+          || typeof myposition.longitude === 'undefined')
+       && triedPositionOnce === false )
     {
       console.log("signalk-cloud: no position, retying in 10s...")
+      triedPositionOnce = true
       if ( !reconnectTimer ) {
         reconnectTimer = setInterval(connect, 10000)
       }
       return
     }
-    
-    app.debug(`myposition: ${JSON.stringify(myposition)}`)
+     
+    debug(`myposition: ${JSON.stringify(myposition)}`)
 
     var infoUrl = url + '/signalk'
-    app.debug(`trying ${infoUrl}`)
+    debug(`trying ${infoUrl}`)
     request(infoUrl, function (error, response, body) {
       if ( error )
       {
@@ -114,7 +117,7 @@ module.exports = function(app) {
 
       var info = JSON.parse(body)
 
-      app.debug(`server info ${JSON.stringify(info)}`)
+      debug(`server info ${JSON.stringify(info)}`)
       
       var endpoints = info.endpoints.v1
       
@@ -125,7 +128,7 @@ module.exports = function(app) {
         httpURL = httpURL + '/'
       }
       
-      app.debug("trying to connect to: " + wsUrl)
+      debug("trying to connect to: " + wsUrl)
 
       var wsOptions = {}
       
@@ -145,7 +148,7 @@ module.exports = function(app) {
       }
 
       connection.onopen = function() {
-        app.debug('connected');
+        debug('connected');
 
         if ( reconnectTimer ) {
           clearInterval(reconnectTimer)
@@ -163,21 +166,20 @@ module.exports = function(app) {
           }]
         }
 
-        app.debug("remote subscription: " + JSON.stringify(remoteSubscription))
+        debug("remote subscription: " + JSON.stringify(remoteSubscription))
 
         connection.send(JSON.stringify(remoteSubscription), function(error) {
           if ( typeof error !== 'undefined' )
             console.log("error sending to serveri: " + error);
         });
 
-        lastSubscriptionPosition = myposition
-        
         var context = "vessels.self"
 
+        /*
         if ( typeof options.sendOtherVessels !== 'undefined'
              && options.sendOtherVessels ) {
           context = "vessels.*"
-        }
+        }*/
 
         var localSubscription
 
@@ -208,6 +210,7 @@ module.exports = function(app) {
           }
         }
 
+        /*
         if ( typeof options.sendOtherVessels !== 'undefined'
              && options.sendOtherVessels ) {
           otherVesselsPaths.forEach(p => {
@@ -219,14 +222,16 @@ module.exports = function(app) {
             );
           });
         }
+        */
         
-        app.debug("local subscription: " + JSON.stringify(localSubscription))
+        debug("local subscription: " + JSON.stringify(localSubscription))
 
         app.subscriptionmanager.subscribe(localSubscription,
                                           onStop,
                                           subscription_error,
                                           handleDelta);
 
+        /*
         if ( typeof options.sendOtherVessels !== 'undefined'
              && options.sendOtherVessels ) {
           localSubscription.context = "atons.*";
@@ -235,26 +240,29 @@ module.exports = function(app) {
                                             subscription_error,
                                             handleDelta);
         }
+        */
         
 
         sendStatic()
         staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
-        var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.latitude}&longitude=${myposition.longitude}`;
-        app.debug(`Getting existing vessels using ${vesselsUrl}`)
-        request(vesselsUrl, (error, response, body) => {
-          if ( !error && response.statusCode ) {
-            var vessels = JSON.parse(body)
-            _.forIn(vessels, (value, key) => {
-              if ( ("vessels." + key) != selfContext ) {
-                app.debug(`loading vessel: ${key}`)
-                app.signalk.root.vessels[key] = value
-              }
+        if ( myposition ) {
+          var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.latitude}&longitude=${myposition.longitude}`;
+          debug(`Getting existing vessels using ${vesselsUrl}`)
+          request(vesselsUrl, (error, response, body) => {
+            if ( !error && response.statusCode ) {
+              var vessels = JSON.parse(body)
+              _.forIn(vessels, (value, key) => {
+                if ( ("vessels." + key) != selfContext ) {
+                  debug(`loading vessel: ${key}`)
+                  app.signalk.root.vessels[key] = value
+                }
             });
-          } else {
-            console.log(`Error getting existing vessels from cloud server: ${error}`)
-          }
-        });
+            } else {
+              console.log(`Error getting existing vessels from cloud server: ${error}`)
+            }
+          });
+        }
       }
       
       connection.onerror = function(error) {
@@ -264,12 +272,12 @@ module.exports = function(app) {
         var delta = JSON.parse(msg.data)
         if(delta.updates && delta.context != selfContext ) {
           cleanupDelta(delta, true)
-          //app.debug("got delta: " + msg.data)
+          //debug("got delta: " + msg.data)
           app.signalk.addDelta.call(app.signalk, delta)
         }
       };
       connection.onclose = function(event) {
-        app.debug('connection close');
+        debug('connection close');
         stopSubscription()
         connection = null
         reconnectTimer = setInterval(connect, 10000)
@@ -321,7 +329,7 @@ module.exports = function(app) {
         }
       }
     });
-    //app.debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
+    //debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
   }
 
   function handleDelta (delta) {
@@ -339,7 +347,7 @@ module.exports = function(app) {
       });
       
       if ( isFromCloud ) {
-        //app.debug("skipping: " + JSON.stringify(delta))
+        //debug("skipping: " + JSON.stringify(delta))
         return
       }
       
@@ -358,7 +366,7 @@ module.exports = function(app) {
         }
       });
 
-      //app.debug("sendDelta: " + JSON.stringify(delta))
+      //debug("sendDelta: " + JSON.stringify(delta))
 
       
       connection.send(JSON.stringify(delta), function(error) {
@@ -378,7 +386,7 @@ module.exports = function(app) {
     }];
     
     staticKeys.forEach(path => {
-      var val = app.getSelfPath(path)
+      var val = _.get(app.signalk.self, path)
       if ( typeof val !== 'undefined' ) {
         if ( typeof val.value !== 'undefined' ) {
           val = val.value
@@ -397,7 +405,7 @@ module.exports = function(app) {
       updates: [ {"values": values} ]
     }
     var deltaString = JSON.stringify(delta)
-    app.debug("sending static data: " + deltaString)
+    debug("sending static data: " + deltaString)
     connection.send(deltaString, function(error) {
       if ( typeof error !== 'undefined' )
         console.log("error sending to serveri: " + error);
@@ -436,12 +444,14 @@ module.exports = function(app) {
         enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
         default: "nav+environment"
       },
+      /*
       sendOtherVessels: {
         type: "boolean",
         title: "Send Data For Other Vessels",
         description: "If enabled, you will send data from your AIS to cloud also",
         default: false
       },
+      */
       clientUpdatePeriod: {
         type: 'number',
         description: "This is the rate at which updates received from the server",
