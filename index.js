@@ -42,8 +42,7 @@ module.exports = function(app) {
   var options
   var staticTimer
   var reconnectTimer
-  var positionTimer
-  var triedPositionOnce = false
+  var positionSubscription
   let selfContext = 'vessels.' + app.selfId
 
   plugin.id = "signalk-cloud";
@@ -76,26 +75,13 @@ module.exports = function(app) {
       url = options.url
     }
 
-    var myposition = _.get(app.signalk.self, "navigation.position")
+    positionSubscription = _.get(app.signalk.self, "navigation.position")
     
-    if ( !_.isUndefined(myposition) && !_.isUndefined(myposition.value) ) {
-      myposition = myposition.value
+    if ( !_.isUndefined(positionSubscription) && !_.isUndefined(positionSubscription.value) ) {
+      positionSubscription = positionSubscription.value
     }
     
-    if ( (typeof myposition === 'undefined'
-          || typeof myposition.latitude === 'undefined'
-          || typeof myposition.longitude === 'undefined')
-       && triedPositionOnce === false )
-    {
-      console.log("signalk-cloud: no position, retying in 10s...")
-      triedPositionOnce = true
-      if ( !reconnectTimer ) {
-        reconnectTimer = setInterval(connect, 10000)
-      }
-      return
-    }
-     
-    debug(`myposition: ${JSON.stringify(myposition)}`)
+    debug(`myposition: ${JSON.stringify(positionSubscription)}`)
 
     var infoUrl = url + '/signalk'
     debug(`trying ${infoUrl}`)
@@ -155,23 +141,9 @@ module.exports = function(app) {
           reconnectTimer = null;
         }
 
-        var remoteSubscription = {
-          context: { relativePosition: {
-              radius: options.otherVesselsRadius
-            }
-          },
-          subscribe: [{
-            path: "*",
-            period: options.clientUpdatePeriod * 1000
-          }]
+        if ( positionSubscription ) {
+          sendPosistionSubscription(connection, positionSubscription)
         }
-
-        debug("remote subscription: " + JSON.stringify(remoteSubscription))
-
-        connection.send(JSON.stringify(remoteSubscription), function(error) {
-          if ( typeof error !== 'undefined' )
-            console.log("error sending to serveri: " + error);
-        });
 
         var context = "vessels.self"
 
@@ -246,8 +218,8 @@ module.exports = function(app) {
         sendStatic()
         staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
-        if ( myposition ) {
-          var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${myposition.latitude}&longitude=${myposition.longitude}`;
+        if ( positionSubscription ) {
+          var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${positionSubscription.latitude}&longitude=${positionSubscription.longitude}`;
           debug(`Getting existing vessels using ${vesselsUrl}`)
           request(vesselsUrl, (error, response, body) => {
             if ( !error && response.statusCode ) {
@@ -307,10 +279,6 @@ module.exports = function(app) {
       clearInterval(reconnectTimer)
       reconnectTimer = null
     }
-    if ( positionTimer ) {
-      clearInterval(positionTimer)
-      positionTimer = null;
-    }
   }
 
   function subscription_error(err)
@@ -364,6 +332,14 @@ module.exports = function(app) {
         if ( typeof u["$source"] !== 'undefined' ) {
           delete u["$source"]
         }
+
+        if ( delta.context == selfContext && !positionSubscription ) {
+          var pos =  u.values.find(pv => pv.path === 'navigation.position')
+          if ( pos ) {
+            sendPosistionSubscription(connection, pos.value)
+            positionSubscription = pos.value
+          }
+        }
       });
 
       //debug("sendDelta: " + JSON.stringify(delta))
@@ -374,6 +350,28 @@ module.exports = function(app) {
           console.log("error sending to serveri: " + error);
       })
     }
+  }
+
+  function sendPosistionSubscription(connection, position) {
+    var remoteSubscription = {
+      context: {
+        relativePosition: {
+          radius: options.otherVesselsRadius,
+          position: position
+        }
+      },
+      subscribe: [{
+        path: "*",
+        period: options.clientUpdatePeriod * 1000
+      }]
+          }
+    
+    debug("remote subscription: " + JSON.stringify(remoteSubscription))
+          
+    connection.send(JSON.stringify(remoteSubscription), function(error) {
+      if ( typeof error !== 'undefined' )
+        console.log("error sending to serveri: " + error);
+    });
   }
 
   function sendStatic() {
