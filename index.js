@@ -80,6 +80,10 @@ module.exports = function(app) {
     if ( !_.isUndefined(positionSubscription) && !_.isUndefined(positionSubscription.value) ) {
       positionSubscription = positionSubscription.value
     }
+
+    if ( _.isUndefined(positionSubscription.latitude) || _.isUndefined(positionSubscription.longitude) ) {
+      positionSubscription = null
+    }
     
     debug(`myposition: ${JSON.stringify(positionSubscription)}`)
 
@@ -218,6 +222,7 @@ module.exports = function(app) {
         sendStatic()
         staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
 
+        /*
         if ( positionSubscription ) {
           var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${positionSubscription.latitude}&longitude=${positionSubscription.longitude}`;
           debug(`Getting existing vessels using ${vesselsUrl}`)
@@ -235,6 +240,7 @@ module.exports = function(app) {
             }
           });
         }
+        */
       }
       
       connection.onerror = function(error) {
@@ -355,16 +361,14 @@ module.exports = function(app) {
   function sendPosistionSubscription(connection, position) {
     var remoteSubscription = {
       context: {
-        relativePosition: {
-          radius: options.otherVesselsRadius,
-          position: position
-        }
+        radius: options.otherVesselsRadius,
+        position: position
       },
       subscribe: [{
         path: "*",
         period: options.clientUpdatePeriod * 1000
       }]
-          }
+    }
     
     debug("remote subscription: " + JSON.stringify(remoteSubscription))
           
