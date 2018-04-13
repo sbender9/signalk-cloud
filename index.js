@@ -81,7 +81,7 @@ module.exports = function(app) {
       positionSubscription = positionSubscription.value
     }
 
-    if ( _.isUndefined(positionSubscription.latitude) || _.isUndefined(positionSubscription.longitude) ) {
+    if ( !_.isUndefined(positionSubscription) && (_.isUndefined(positionSubscription.latitude) || _.isUndefined(positionSubscription.longitude)) ) {
       positionSubscription = null
     }
     
