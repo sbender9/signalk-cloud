@@ -75,7 +75,7 @@ module.exports = function(app) {
       url = options.url
     }
 
-    positionSubscription = _.get(app.signalk.self, "navigation.position")
+    positionSubscription = app.getSelfPath("navigation.position")
     
     if ( !_.isUndefined(positionSubscription) && !_.isUndefined(positionSubscription.value) ) {
       positionSubscription = positionSubscription.value
@@ -85,14 +85,14 @@ module.exports = function(app) {
       positionSubscription = null
     }
     
-    debug(`myposition: ${JSON.stringify(positionSubscription)}`)
+    app.debug(`myposition: ${JSON.stringify(positionSubscription)}`)
 
     var infoUrl = url + '/signalk'
-    debug(`trying ${infoUrl}`)
+    app.debug(`trying ${infoUrl}`)
     request(infoUrl, function (error, response, body) {
       if ( error )
       {
-        console.log(`Error connecting to cloud server ${error}`)
+        app.error(`Error connecting to cloud server ${error}`)
         if ( ! reconnectTimer ) {
           reconnectTimer = setInterval(connect, 10000)
         }
@@ -107,7 +107,7 @@ module.exports = function(app) {
 
       var info = JSON.parse(body)
 
-      debug(`server info ${JSON.stringify(info)}`)
+      app.debug(`server info ${JSON.stringify(info)}`)
       
       var endpoints = info.endpoints.v1
       
@@ -118,7 +118,7 @@ module.exports = function(app) {
         httpURL = httpURL + '/'
       }
       
-      debug("trying to connect to: " + wsUrl)
+      app.debug("trying to connect to: " + wsUrl)
 
       var wsOptions = {}
       
@@ -138,7 +138,7 @@ module.exports = function(app) {
       }
 
       connection.onopen = function() {
-        debug('connected');
+        app.debug('connected');
 
         if ( reconnectTimer ) {
           clearInterval(reconnectTimer)
@@ -200,7 +200,7 @@ module.exports = function(app) {
         }
         */
         
-        debug("local subscription: " + JSON.stringify(localSubscription))
+        app.debug("local subscription: " + JSON.stringify(localSubscription))
 
         app.subscriptionmanager.subscribe(localSubscription,
                                           onStop,
@@ -225,13 +225,13 @@ module.exports = function(app) {
         /*
         if ( positionSubscription ) {
           var vesselsUrl = httpURL + `vessels?radius=${options.otherVesselsRadius}&latitude=${positionSubscription.latitude}&longitude=${positionSubscription.longitude}`;
-          debug(`Getting existing vessels using ${vesselsUrl}`)
+          app.debug(`Getting existing vessels using ${vesselsUrl}`)
           request(vesselsUrl, (error, response, body) => {
             if ( !error && response.statusCode ) {
               var vessels = JSON.parse(body)
               _.forIn(vessels, (value, key) => {
                 if ( ("vessels." + key) != selfContext ) {
-                  debug(`loading vessel: ${key}`)
+                  app.debug(`loading vessel: ${key}`)
                   app.signalk.root.vessels[key] = value
                 }
             });
@@ -244,18 +244,19 @@ module.exports = function(app) {
       }
       
       connection.onerror = function(error) {
-        console.log('signalk-cloud: connection error:' + error);
+        app.error('connection error:' + error);
       }
       connection.onmessage = function(msg) {
         var delta = JSON.parse(msg.data)
         if(delta.updates && delta.context != selfContext ) {
           cleanupDelta(delta, true)
-          //debug("got delta: " + msg.data)
-          app.signalk.addDelta.call(app.signalk, delta)
+          //app.debug("got delta: " + msg.data)
+          //app.signalk.addDelta.call(app.signalk, delta)
+          app.handleMessage(plugin.id, delta)
         }
       };
       connection.onclose = function(event) {
-        debug('connection close');
+        app.debug('connection close');
         stopSubscription()
         connection = null
         reconnectTimer = setInterval(connect, 10000)
@@ -289,7 +290,7 @@ module.exports = function(app) {
 
   function subscription_error(err)
   {
-    console.log("error: " + err)
+    app.error("error: " + err)
   }
 
   function cleanupDelta(delta, fromCloud) {
@@ -303,7 +304,7 @@ module.exports = function(app) {
         }
       }
     });
-    //debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
+    //app.debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
   }
 
   function handleDelta (delta) {
@@ -321,7 +322,7 @@ module.exports = function(app) {
       });
       
       if ( isFromCloud ) {
-        //debug("skipping: " + JSON.stringify(delta))
+        //app.debug("skipping: " + JSON.stringify(delta))
         return
       }
       
@@ -348,12 +349,12 @@ module.exports = function(app) {
         }
       });
 
-      //debug("sendDelta: " + JSON.stringify(delta))
+      //app.debug("sendDelta: " + JSON.stringify(delta))
 
       
       connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' )
-          console.log("error sending to serveri: " + error);
+          app.error("error sending to serveri: " + error);
       })
     }
   }
@@ -370,11 +371,11 @@ module.exports = function(app) {
       }]
     }
     
-    debug("remote subscription: " + JSON.stringify(remoteSubscription))
+    app.debug("remote subscription: " + JSON.stringify(remoteSubscription))
           
     connection.send(JSON.stringify(remoteSubscription), function(error) {
       if ( typeof error !== 'undefined' )
-        console.log("error sending to serveri: " + error);
+        app.error("error sending to serveri: " + error);
     });
   }
 
@@ -388,7 +389,7 @@ module.exports = function(app) {
     }];
     
     staticKeys.forEach(path => {
-      var val = _.get(app.signalk.self, path)
+      var val = app.getSelfPath(path);
       if ( typeof val !== 'undefined' ) {
         if ( typeof val.value !== 'undefined' ) {
           val = val.value
@@ -407,10 +408,10 @@ module.exports = function(app) {
       updates: [ {"values": values} ]
     }
     var deltaString = JSON.stringify(delta)
-    debug("sending static data: " + deltaString)
+    app.debug("sending static data: " + deltaString)
     connection.send(deltaString, function(error) {
       if ( typeof error !== 'undefined' )
-        console.log("error sending to serveri: " + error);
+        app.error("error sending to server: " + error);
     });
   }
 
