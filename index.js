@@ -52,11 +52,17 @@ module.exports = function(app) {
   plugin.description = "Plugin that updates and retrieves data from a SignalK cloud server";
 
   const setProviderStatus = app.setProviderStatus
-        ? (msg, type) => {
-          app.setProviderStatus(msg, type)
-          statusMessage = `${type}: ${msg}`
-        } : (msg, type) => { statusMessage = `${type}: ${msg}` }
+        ? (msg) => {
+          app.setProviderStatus(msg)
+          statusMessage = msg
+        } : (msg) => { statusMessage = msg }
 
+  const setProviderError = app.setProviderError
+        ? (msg) => {
+          app.setProviderError(msg)
+          statusMessage = `error: ${msg}`
+        } : (msg, type) => { statusMessage = `error: ${msg}` }
+  
   plugin.statusMessage = () => {
     return statusMessage
   }
@@ -67,7 +73,7 @@ module.exports = function(app) {
     if ( typeof options.jwtToken === 'undefined'
          || options.jwtToken.length == 0 )
     {
-      setProviderStatus('no jwt token configured', 'error')
+      setProviderError('no jwt token configured')
       console.log('signalk-cloud: ERROR no jwt token specified')
       return;
     }
@@ -106,7 +112,7 @@ module.exports = function(app) {
       if ( error )
       {
         const msg = `Error connecting to cloud server ${error.message}`
-        setProviderStatus(msg, 'error')
+        setProviderError(msg)
         app.error(msg)
         if ( ! reconnectTimer ) {
           reconnectTimer = setInterval(connect, 10000)
@@ -114,7 +120,7 @@ module.exports = function(app) {
         return
       } else if ( response.statusCode != 200 ) {
         const msg = `Bad status code from cloud server ${response.statusCode}`
-        setProviderStatus(msg, 'error')
+        setProviderError(msg)
         app.error(msg)
         if ( !reconnectTimer ) {
           reconnectTimer = setInterval(connect, 10000)
@@ -136,7 +142,7 @@ module.exports = function(app) {
       }
 
       const msg = `trying to connect to: ${wsUrl}`
-      setProviderStatus(msg, 'normal')
+      setProviderStatus(msg)
       app.debug(msg)
 
       var wsOptions = {}
@@ -152,13 +158,13 @@ module.exports = function(app) {
       }
       catch ( e )
       {
-        setProviderStatus(e.message, 'error')
+        setProviderError(e.message)
         console.log(`${e}: creating websocket for url: ${wsUrl}`);
         return
       }
 
       connection.onopen = function() {
-        setProviderStatus(`Connected to ${options.url}`, 'normal')
+        setProviderStatus(`Connected to ${options.url}`)
         app.debug('connected');
 
         if ( reconnectTimer ) {
@@ -265,7 +271,7 @@ module.exports = function(app) {
       }
       
       connection.onerror = function(error) {
-        setProviderStatus(error.message, 'error')
+        setProviderError(error.message)
         app.error('connection error:' + error);
       }
       connection.onmessage = function(msg) {
@@ -278,7 +284,7 @@ module.exports = function(app) {
         }
       };
       connection.onclose = function(event) {
-        setProviderStatus('connection closed', error)
+        setProviderError('connection closed')
         app.debug('connection close');
         stopSubscription()
         connection = null
@@ -379,11 +385,11 @@ module.exports = function(app) {
       
       connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' ) {
-          setProviderStatus(`sending: ${error.toString()}`, 'error')
+          setProviderError(`sending: ${error.toString()}`)
           app.error("error sending to server: " + error);
           hadError = true
         } else if ( hadError ) {
-          setProviderStatus(`Connected to ${options.url}`, 'normal')
+          setProviderStatus(`Connected to ${options.url}`)
           hadError = false
         }
       })
@@ -406,11 +412,11 @@ module.exports = function(app) {
           
     connection.send(JSON.stringify(remoteSubscription), function(error) {
       if ( typeof error !== 'undefined' ) {
-        setProviderStatus(`sending: ${error.toString()}`, 'error')
+        setProviderError(`sending: ${error.toString()}`)
         app.error("error sending to server: " + error);
         hadError = true
       } else if ( hadError ) {
-        setProviderStatus(`Connected to ${options.url}`, 'normal')
+        setProviderStatus(`Connected to ${options.url}`)
         hadError = false
       }
     });
@@ -448,11 +454,11 @@ module.exports = function(app) {
     app.debug("sending static data: " + deltaString)
     connection.send(deltaString, function(error) {
       if ( typeof error !== 'undefined' ) {
-        setProviderStatus(`sending: ${error.toString()}`, 'error')
+        setProviderError(`sending: ${error.toString()}`)
         app.error("error sending to server: " + error);
         hadError = true
       } else if ( hadError ) {
-        setProviderStatus(`Connected to ${options.url}`, 'normal')
+        setProviderStatus(`Connected to ${options.url}`)
         hadError = false
       }
     });
