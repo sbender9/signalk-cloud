@@ -2,6 +2,7 @@ const WebSocket = require('ws')
 const _ = require('lodash')
 const request = require('request')
 const debug = require('debug')('signalk-cloud')
+const uuidv4 = require('uuid/v4')
 
 const staticKeys = [
   "name",
@@ -37,12 +38,9 @@ const otherVesselsPaths = [
 
 module.exports = function(app) {
   var plugin = {};
-  var connection
-  var onStop = []
+  var connectionInfos = {}
   var options
-  var staticTimer
-  var reconnectTimer
-  var positionSubscription
+  var positionSubscriptions = {}
   let selfContext = 'vessels.' + app.selfId
   var statusMessage
   var hadError = false
@@ -70,6 +68,7 @@ module.exports = function(app) {
   plugin.start = function(theOptions) {
     options = theOptions;
 
+    /*
     if ( typeof options.jwtToken === 'undefined'
          || options.jwtToken.length == 0 )
     {
@@ -77,24 +76,34 @@ module.exports = function(app) {
       console.log('signalk-cloud: ERROR no jwt token specified')
       return;
     }
-    
-    connect()
+    */
+
+    if ( _.isUndefined(options.enabled) || options.enabled ) {
+      connect(options)
+    }
+    if ( options.otherServers ) {
+      options.otherServers.forEach(settings => {
+        if ( settings.enabled ) {
+          connect(settings)
+        }
+      })
+    }
   };
 
-  function connect()
+  function connect(settings)
   {
     var url
 
     //try to support old config which had the ws url
-    if ( options.url.startsWith("ws:") ) {
-      url = "http:" + options.url.substring(3);
-    } else if ( options.url.startsWith("wss:") ) {
-      url = "https:" + options.url.substring(4);
+    if ( settings.url.startsWith("ws:") ) {
+      url = "http:" + settings.url.substring(3);
+    } else if ( settings.url.startsWith("wss:") ) {
+      url = "https:" + settings.url.substring(4);
     } else {
-      url = options.url
+      url = settings.url
     }
 
-    positionSubscription = app.getSelfPath("navigation.position")
+    let positionSubscription = app.getSelfPath("navigation.position")
     
     if ( !_.isUndefined(positionSubscription) && !_.isUndefined(positionSubscription.value) ) {
       positionSubscription = positionSubscription.value
@@ -106,6 +115,16 @@ module.exports = function(app) {
     
     app.debug(`myposition: ${JSON.stringify(positionSubscription)}`)
 
+    let info = connectionInfos[settings.url]
+    
+    if ( !info ) {
+      info = {
+        onStop: [],
+        positionSubscriptionSent: false,
+      }
+      connectionInfos[settings.url] = info
+    }
+
     var infoUrl = url + '/signalk'
     app.debug(`trying ${infoUrl}`)
     request(infoUrl, function (error, response, body) {
@@ -114,25 +133,29 @@ module.exports = function(app) {
         const msg = `Error connecting to cloud server ${error.message}`
         setProviderError(msg)
         app.error(msg)
-        if ( ! reconnectTimer ) {
-          reconnectTimer = setInterval(connect, 10000)
+        if ( ! info.reconnectTimer ) {
+          info.reconnectTimer = setInterval(() => {
+            connect(settings)
+          }, 10000)
         }
         return
       } else if ( response.statusCode != 200 ) {
         const msg = `Bad status code from cloud server ${response.statusCode}`
         setProviderError(msg)
         app.error(msg)
-        if ( !reconnectTimer ) {
-          reconnectTimer = setInterval(connect, 10000)
+        if ( !info.reconnectTimer ) {
+          info.reconnectTimer = setInterval(() => {
+            connect(settings)
+          }, 10000)
         }
         return
       }
 
-      var info = JSON.parse(body)
+      var serverInfo = JSON.parse(body)
 
-      app.debug(`server info ${JSON.stringify(info)}`)
+      app.debug(`server info ${JSON.stringify(serverInfo)}`)
       
-      var endpoints = info.endpoints.v1
+      var endpoints = serverInfo.endpoints.v1
       
       var wsUrl = (endpoints['signalk-ws'] ? endpoints['signalk-ws'] : endpoints['signalk-wss']) + '?subscribe=none'
       var httpURL = (endpoints['signalk-https'] ? endpoints['signalk-https'] : endpoints['signalk-http'])
@@ -147,9 +170,12 @@ module.exports = function(app) {
 
       var wsOptions = {}
       
-      if ( typeof options.jwtToken !== 'undefined'
-           && options.jwtToken.length > 0 ) {
-        wsOptions.headers = { 'Authorization': 'JWT ' + options.jwtToken }
+      if ( typeof settings.jwtToken !== 'undefined'
+           && settings.jwtToken.length > 0 ) {
+        wsOptions.headers = { 'Authorization': 'JWT ' + settings.jwtToken }
+        info.hasToken = true
+      } else {
+        info.hasToken = false
       }
 
       try
@@ -163,17 +189,32 @@ module.exports = function(app) {
         return
       }
 
+      info.connection = connection
+      
       connection.onopen = function() {
-        setProviderStatus(`Connected to ${options.url}`)
+        setProviderStatus(`Connected to ${settings.url}`)
         app.debug('connected');
 
-        if ( reconnectTimer ) {
-          clearInterval(reconnectTimer)
-          reconnectTimer = null;
+        if ( info.reconnectTimer ) {
+          clearInterval(info.reconnectTimer)
+          info.reconnectTimer = null;
+        }
+
+        if ( !settings.jwtToken || settings.jwtToken.length == 0 ) {
+          let msg = JSON.stringify({
+            requestId: uuidv4(),
+            accessRequest: {
+              clientId: uuidv4(),
+              description: app.getSelfPath('name'),
+              permissions: 'readwrite'
+            }
+          })
+          debug('sending access request %s', msg)
+          connection.send(msg)
         }
 
         if ( positionSubscription ) {
-          sendPosistionSubscription(connection, positionSubscription)
+          sendPosistionSubscription(info, positionSubscription)
         }
 
         var context = "vessels.self"
@@ -186,12 +227,12 @@ module.exports = function(app) {
 
         var localSubscription
 
-        if ( options.dataToSend == 'all' ) {
+        if ( settings.dataToSend == 'all' ) {
           localSubscription = {
             "context": context,
             subscribe: [{
               path: "*",
-              period: options.serverUpdatePeriod * 1000
+              period: settings.serverUpdatePeriod * 1000
             }]
           }
         } else {
@@ -199,15 +240,15 @@ module.exports = function(app) {
             "context": context,
             subscribe: [{
               path: "navigation.*",
-              period: options.serverUpdatePeriod * 1000
+              period: settings.serverUpdatePeriod * 1000
             }]
           }
           
-          if ( options.dataToSend == 'nav+environment' ) {
+          if ( settings.dataToSend == 'nav+environment' ) {
             localSubscription.subscribe.push(
               {
                 path: "environment.*",
-                period: options.serverUpdatePeriod * 1000
+                period: settings.serverUpdatePeriod * 1000
               }
             );
           }
@@ -230,9 +271,11 @@ module.exports = function(app) {
         app.debug("local subscription: " + JSON.stringify(localSubscription))
 
         app.subscriptionmanager.subscribe(localSubscription,
-                                          onStop,
+                                          info.onStop,
                                           subscription_error,
-                                          handleDelta);
+                                          delta => {
+                                            handleDelta(info, delta)
+                                          });
 
         /*
         if ( typeof options.sendOtherVessels !== 'undefined'
@@ -246,8 +289,10 @@ module.exports = function(app) {
         */
         
 
-        sendStatic()
-        staticTimer = setInterval(sendStatic, 60000*options.staticUpdatePeriod)
+        sendStatic(info)
+        info.staticTimer = setInterval(() => {
+          sendStatic(info)
+        }, 60000*settings.staticUpdatePeriod)
 
         /*
         if ( positionSubscription ) {
@@ -272,7 +317,8 @@ module.exports = function(app) {
       
       connection.onerror = function(error) {
         setProviderError(error.message)
-        app.error('connection error:' + error);
+        app.error('connection error: ' + settings.url);
+        app.error(error.stack)
       }
       connection.onmessage = function(msg) {
         var delta = JSON.parse(msg.data)
@@ -281,39 +327,57 @@ module.exports = function(app) {
           //app.debug("got delta: " + msg.data)
           //app.signalk.addDelta.call(app.signalk, delta)
           app.handleMessage(plugin.id, delta)
+        } else if ( delta.accessRequest ) {
+          if ( delta.accessRequest.token ) {
+            settings.jwtToken = delta.accessRequest.token
+            info.hasToken = true
+            debug('got token %s', settings.jwtToken)
+            app.savePluginOptions(options, (err) => {})
+          } else {
+            let msg = 'access request was denied'
+            setProviderError(msg)
+            app.error(msg)
+          }
         }
       };
       connection.onclose = function(event) {
-        setProviderError('connection closed')
-        app.debug('connection close');
-        stopSubscription()
-        connection = null
-        reconnectTimer = setInterval(connect, 10000)
+        setProviderError(`connection closed: ${settings.url}`)
+        app.debug('connection closed %s', settings.url);
+        stopSubscription(settings.url)
+        info.connection = null
+        info.reconnectTimer = setInterval(() => {
+          connect(settings)
+        }, 10000)
       };
     });
   }
 
   plugin.stop = function() {
-    stopSubscription()
-    if ( connection )
-    {
-      connection.onclose = null;
-      connection.close();
-    }
+    _.keys(connectionInfos).forEach(url => {
+      let info = connectionInfos[url]
+      stopSubscription(url)
+      if ( info.connection ) {
+        debug('closing connection to %s', url)
+        info.connection.onclose = null;
+        info.connection.close();
+      }
+    })
+    connectionInfos = {}
   };
 
-  function stopSubscription()
+  function stopSubscription(url)
   {
-    onStop.forEach(f => f());
-    onStop = []
+    let info = connectionInfos[url]
+    info.onStop.forEach(f => f());
+    info.onStop = []
 
-    if ( staticTimer ) {
-      clearInterval(staticTimer)
-      staticTimer = null;
+    if ( info.staticTimer ) {
+      clearInterval(info.staticTimer)
+      info.staticTimer = null;
     }
-    if ( reconnectTimer ) {
-      clearInterval(reconnectTimer)
-      reconnectTimer = null
+    if ( info.reconnectTimer ) {
+      clearInterval(info.reconnectTimer)
+      info.reconnectTimer = null
     }
   }
 
@@ -336,8 +400,12 @@ module.exports = function(app) {
     //app.debug("cleanupDeltaFromCloud: " + JSON.stringify(delta))
   }
 
-  function handleDelta (delta) {
+  function handleDelta (info, delta) {
     var isFromCloud = false
+
+    if ( !info.hasToken ) {
+      return
+    }
 
     if ( delta.updates ) {
       delta.updates.forEach(u => {
@@ -370,12 +438,11 @@ module.exports = function(app) {
         }
 
         if ( delta.context == selfContext &&
-             !positionSubscription &&
+             !info.positionSubscriptionSent &&
              u.values ) {
           var pos =  u.values.find(pv => pv.path === 'navigation.position')
           if ( pos ) {
-            sendPosistionSubscription(connection, pos.value)
-            positionSubscription = pos.value
+            sendPosistionSubscription(info, pos.value)
           }
         }
       });
@@ -383,20 +450,21 @@ module.exports = function(app) {
       //app.debug("sendDelta: " + JSON.stringify(delta))
 
       
-      connection.send(JSON.stringify(delta), function(error) {
+      info.connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' ) {
-          setProviderError(`sending: ${error.toString()}`)
-          app.error("error sending to server: " + error);
+          setProviderError(`sending: ${info.url} ${error.toString()}`)
+          app.error(`error sending to server: ${info.url}`);
+          app.error(error)
           hadError = true
         } else if ( hadError ) {
-          setProviderStatus(`Connected to ${options.url}`)
+          setProviderStatus(`Connected to ${info.url}`)
           hadError = false
         }
       })
     }
   }
 
-  function sendPosistionSubscription(connection, position) {
+  function sendPosistionSubscription(info, position) {
     var remoteSubscription = {
       context: {
         radius: options.otherVesselsRadius,
@@ -409,6 +477,8 @@ module.exports = function(app) {
     }
     
     app.debug("remote subscription: " + JSON.stringify(remoteSubscription))
+
+    info.positionSubscriptionSent = true
           
     connection.send(JSON.stringify(remoteSubscription), function(error) {
       if ( typeof error !== 'undefined' ) {
@@ -422,7 +492,10 @@ module.exports = function(app) {
     });
   }
 
-  function sendStatic() {
+  function sendStatic(info) {
+    if ( !info.hasToken )
+      return
+    
     var values = [{
       path: "",
       value: {
@@ -452,7 +525,7 @@ module.exports = function(app) {
     }
     var deltaString = JSON.stringify(delta)
     app.debug("sending static data: " + deltaString)
-    connection.send(deltaString, function(error) {
+    info.connection.send(deltaString, function(error) {
       if ( typeof error !== 'undefined' ) {
         setProviderError(`sending: ${error.toString()}`)
         app.error("error sending to server: " + error);
@@ -468,6 +541,11 @@ module.exports = function(app) {
     type: 'object',
     required: ['url'],
     properties: {
+      enabled: {
+        type: 'boolean',
+        title: 'Server Enabled',
+        default: true
+      },
       url: {
         type: 'string',
         title: 'Server URL',
@@ -496,14 +574,6 @@ module.exports = function(app) {
         enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
         default: "nav+environment"
       },
-      /*
-      sendOtherVessels: {
-        type: "boolean",
-        title: "Send Data For Other Vessels",
-        description: "If enabled, you will send data from your AIS to cloud also",
-        default: false
-      },
-      */
       clientUpdatePeriod: {
         type: 'number',
         description: "This is the rate at which updates received from the server",
@@ -515,6 +585,61 @@ module.exports = function(app) {
         description: "The radius in meters of other vessels to watch",
         title: "Other Vessel Radius",
         default: 5000
+      },
+      otherServers: {
+        type: 'array',
+        title: 'Other Servers',
+        items: {
+          type: 'object',
+          required: ['url'],
+          properties: {
+            enabled: {
+              type: 'boolean',
+              title: 'Server Enabled',
+              default: true
+            },
+            url: {
+              type: 'string',
+              title: 'Server URL',
+              default: 'http://cloud.signalk.org'
+            },
+            jwtToken: {
+              type: "string",
+              title: "JWT Token"
+            },
+            serverUpdatePeriod: {
+              type: 'number',
+              description: "This is the rate at which updates will be sent to the server",
+              title: 'Server Update Period (seconds)',
+              default: 30
+            },
+            staticUpdatePeriod: {
+              type: 'number',
+              description: "This is the rate at which updates to static data (name, msi, deisgn, etc) will be sent to the server",
+              title: 'Static Update Period (minutes)',
+              default: 5
+            },      
+            dataToSend: {
+              type: "string",
+              title: "Data To Send",
+              enum: [ "nav", "nav+environment", "all" ],
+              enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
+              default: "nav+environment"
+            },
+            clientUpdatePeriod: {
+              type: 'number',
+              description: "This is the rate at which updates received from the server",
+              title: 'Client Update Period (seconds)',
+              default: 30
+            },
+            otherVesselsRadius: {
+              type: "number",
+              description: "The radius in meters of other vessels to watch",
+              title: "Other Vessel Radius",
+              default: 5000
+            }
+          }
+        }
       }
     }
   };
