@@ -121,6 +121,7 @@ module.exports = function(app) {
       info = {
         onStop: [],
         positionSubscriptionSent: false,
+        settings
       }
       connectionInfos[settings.url] = info
     }
@@ -156,8 +157,16 @@ module.exports = function(app) {
       app.debug(`server info ${JSON.stringify(serverInfo)}`)
       
       var endpoints = serverInfo.endpoints.v1
+
+      if ( settings.serverUpdatePeriod < 10 ) {
+        settings.serverUpdatePeriod = 10
+      }
+
+      if ( settings.staticUpdateRate < 5 ) {
+        settings.staticUpdateRate = 5
+      }
       
-      var wsUrl = (endpoints['signalk-ws'] ? endpoints['signalk-ws'] : endpoints['signalk-wss']) + '?subscribe=none'
+      var wsUrl = (endpoints['signalk-ws'] ? endpoints['signalk-ws'] : endpoints['signalk-wss']) + `?subscribe=none&updateRate=${settings.serverUpdatePeriod}&staticUpdateRate=${settings.staticUpdatePeriod}`
       var httpURL = (endpoints['signalk-https'] ? endpoints['signalk-https'] : endpoints['signalk-http'])
 
       if ( !httpURL.endsWith('/') ) {
@@ -178,6 +187,7 @@ module.exports = function(app) {
         info.hasToken = false
       }
 
+      let connection
       try
       {
         connection = new WebSocket(wsUrl, "ws", wsOptions);
@@ -200,6 +210,7 @@ module.exports = function(app) {
           info.reconnectTimer = null;
         }
 
+        /*
         if ( !settings.jwtToken || settings.jwtToken.length == 0 ) {
           let msg = JSON.stringify({
             requestId: uuidv4(),
@@ -211,9 +222,9 @@ module.exports = function(app) {
           })
           debug('sending access request %s', msg)
           connection.send(msg)
-        }
+        }*/
 
-        if ( positionSubscription ) {
+        if ( positionSubscription && settings.getOtherVessels ) {
           sendPosistionSubscription(info, positionSubscription)
         }
 
@@ -437,7 +448,8 @@ module.exports = function(app) {
           delete u["$source"]
         }
 
-        if ( delta.context == selfContext &&
+        if ( info.settings.getOtherVessels &&
+             delta.context == selfContext &&
              !info.positionSubscriptionSent &&
              u.values ) {
           var pos =  u.values.find(pv => pv.path === 'navigation.position')
@@ -467,12 +479,12 @@ module.exports = function(app) {
   function sendPosistionSubscription(info, position) {
     var remoteSubscription = {
       context: {
-        radius: options.otherVesselsRadius,
+        radius: info.settings.otherVesselsRadius,
         position: position
       },
       subscribe: [{
         path: "*",
-        period: options.clientUpdatePeriod * 1000
+        period: info.settings.clientUpdatePeriod * 1000
       }]
     }
     
@@ -480,13 +492,13 @@ module.exports = function(app) {
 
     info.positionSubscriptionSent = true
           
-    connection.send(JSON.stringify(remoteSubscription), function(error) {
+    info.connection.send(JSON.stringify(remoteSubscription), function(error) {
       if ( typeof error !== 'undefined' ) {
         setProviderError(`sending: ${error.toString()}`)
         app.error("error sending to server: " + error);
         hadError = true
       } else if ( hadError ) {
-        setProviderStatus(`Connected to ${options.url}`)
+        setProviderStatus(`Connected to ${info.settings.url}`)
         hadError = false
       }
     });
@@ -531,7 +543,7 @@ module.exports = function(app) {
         app.error("error sending to server: " + error);
         hadError = true
       } else if ( hadError ) {
-        setProviderStatus(`Connected to ${options.url}`)
+        setProviderStatus(`Connected to ${info.settings.url}`)
         hadError = false
       }
     });
@@ -573,6 +585,12 @@ module.exports = function(app) {
         enum: [ "nav", "nav+environment", "all" ],
         enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
         default: "nav+environment"
+      },
+      getOtherVessels: {
+        type: 'boolean',
+        title: 'Get Other Vessels',
+        description: 'When enabled, other vessels in range will be subscribed to',
+        default: false
       },
       clientUpdatePeriod: {
         type: 'number',
@@ -625,6 +643,12 @@ module.exports = function(app) {
               enum: [ "nav", "nav+environment", "all" ],
               enumNames: [ "Navigation related data only", "Navigation data and Environmental data", "All Data"],
               default: "nav+environment"
+            },
+            getOtherVessels: {
+              type: 'boolean',
+              title: 'Get Other Vessels',
+              description: 'When enabled, other vessels in range will be subscribed to',
+              default: false
             },
             clientUpdatePeriod: {
               type: 'number',
