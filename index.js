@@ -2,7 +2,7 @@ const WebSocket = require('ws')
 const _ = require('lodash')
 const request = require('request')
 const debug = require('debug')('signalk-cloud')
-const uuidv4 = require('uuid/v4')
+const uuidv4 = require('uuid').v4
 
 const staticKeys = [
   "name",
