@@ -20,8 +20,9 @@
   "dependencies": {
     "debug": "^3.1.0",
     "lodash": "^4.17.4",
-    "request": "^2.83.0",
-    "ws": "^3.0.0"
+    "request": "^2.88.2",
+    "uuid": "^9.0.0",
+    "ws": "^8.13.0"
   },
   "repository": {
     "type": "git",
