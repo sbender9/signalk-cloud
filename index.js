@@ -145,7 +145,7 @@ module.exports = function(app) {
         setProviderError(msg)
         app.error(msg)
         if ( !info.reconnectTimer ) {
-          info.reconnectTimer = setInterval(() => {
+         info.reconnectTimer = setInterval(() => {
             connect(settings)
           }, 10000)
         }
@@ -461,7 +461,8 @@ module.exports = function(app) {
 
       //app.debug("sendDelta: " + JSON.stringify(delta))
 
-      
+
+      app.reportOutputMessages(1)
       info.connection.send(JSON.stringify(delta), function(error) {
         if ( typeof error !== 'undefined' ) {
           setProviderError(`sending: ${info.url} ${error.toString()}`)
@@ -537,6 +538,7 @@ module.exports = function(app) {
     }
     var deltaString = JSON.stringify(delta)
     app.debug("sending static data: " + deltaString)
+    app.reportOutputMessages(1)
     info.connection.send(deltaString, function(error) {
       if ( typeof error !== 'undefined' ) {
         setProviderError(`sending: ${error.toString()}`)
